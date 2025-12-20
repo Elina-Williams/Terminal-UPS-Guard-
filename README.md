@@ -57,15 +57,15 @@ A **lightweight, high-performance UPS monitoring system** built entirely in C/C+
 # Kali / Debian / Ubuntu
 sudo apt update
 sudo apt install -y gcc g++ libncurses-dev i2c-tools
+```
 
 #### **2. Compile the Programs**
 ```bash
 # Compile the main monitoring daemon
 g++ -o ups_monitor_daemon ./ups_monitor_daemon.cpp
-```
-
 # Compile the TUI popup interface
 gcc -o ups_tui ./ups_tui.c -lncurses
+```
 
 #### **3.  Install to System Directories**
 ```bash
