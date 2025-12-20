@@ -1,0 +1,37 @@
+[Unit]
+Description=UPS Monitoring Daemon
+# Documentation=https://github.com/elina/ups-monitor
+After=multi-user.target
+After=syslog.target
+After=systemd-udevd.service
+Requires=systemd-udevd.service
+Wants=local-fs.target
+ConditionPathExists=/dev/i2c-1
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ups_monitor_daemon
+User=root
+Group=root
+
+Restart=on-failure
+RestartSec=10s
+
+MemoryLimit=20M
+CPUQuota=10%
+
+Environment=TERM=xterm-256color
+Environment=COLORTERM=truecolor
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/%i/.Xauthority
+
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+SendSIGKILL=yes
+SendSIGKILL=no
+
+PassEnvironment=TERM COLORTERM DISPLAY XAUTHORITY
+
+[Install]
+WantedBy=multi-user.target
