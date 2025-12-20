@@ -42,9 +42,49 @@ A **lightweight, high-performance UPS monitoring system** built entirely in C/C+
 - **Terminal Resize Support** - Adapts to any terminal size
 - **Non-blocking Architecture** - Monitoring continues during popups
 
+
 ## 🛠️ **Supported Hardware & Software**
 
 ### **Hardware**
 - **SBC**: Raspberry Pi 5 (all variants)
 - **UPS**: Waveshare UPS HAT (E) - I2C interface, 2-4 cell Li-ion
 - **Compatible**: Any system with I2C and Linux
+
+
+### **Step-by-Step Manual Installation**
+#### **1. Install Dependencies**
+```bash
+# Kali / Debian / Ubuntu
+sudo apt update
+sudo apt install -y gcc g++ libncurses-dev i2c-tools
+
+#### **2. Compile the Programs**
+```bash
+# Compile the main monitoring daemon
+g++ -o ups_monitor_daemon ./ups_monitor_daemon.cpp
+
+# Compile the TUI popup interface
+gcc -o ups_tui ./ups_tui.c -lncurses
+
+#### **3.  Install to System Directories**
+```bash
+# Copy executables to /usr/local/bin
+sudo cp ups_monitor_daemon ups_tui /usr/local/bin/
+
+#### **4.  Configure Systemd Service**
+```bash
+# Copy the systemd service file
+sudo cp ups-monitor.service /etc/systemd/system/
+
+#### **5. Reload and Enable Service**
+```bash
+sudo systemctl daemon-reload
+
+# Enable service to start on boot
+sudo systemctl enable ups-monitor
+
+# Start the service immediately
+sudo systemctl start ups-monitor
+
+# Check service status
+sudo systemctl status ups-monitor
