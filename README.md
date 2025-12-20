@@ -62,6 +62,7 @@ sudo apt install -y gcc g++ libncurses-dev i2c-tools
 ```bash
 # Compile the main monitoring daemon
 g++ -o ups_monitor_daemon ./ups_monitor_daemon.cpp
+```
 
 # Compile the TUI popup interface
 gcc -o ups_tui ./ups_tui.c -lncurses
@@ -70,11 +71,13 @@ gcc -o ups_tui ./ups_tui.c -lncurses
 ```bash
 # Copy executables to /usr/local/bin
 sudo cp ups_monitor_daemon ups_tui /usr/local/bin/
+```
 
 #### **4.  Configure Systemd Service**
 ```bash
 # Copy the systemd service file
 sudo cp ups-monitor.service /etc/systemd/system/
+```
 
 #### **5. Reload and Enable Service**
 ```bash
@@ -88,3 +91,4 @@ sudo systemctl start ups-monitor
 
 # Check service status
 sudo systemctl status ups-monitor
+```
