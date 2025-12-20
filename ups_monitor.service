@@ -1,6 +1,6 @@
 [Unit]
 Description=UPS Monitoring Daemon
-# Documentation=https://github.com/elina/ups-monitor
+Documentation=https://github.com/Elina-Williams/Terminal-UPS-Guard-
 After=multi-user.target
 After=syslog.target
 After=systemd-udevd.service
