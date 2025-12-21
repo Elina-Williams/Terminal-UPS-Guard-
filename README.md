@@ -5,7 +5,7 @@ A **lightweight, high-performance UPS monitoring system** built entirely in C/C+
 
 ## 🚀 **Performance Comparison**
 
-> **Measured on Raspberry Pi 5 with 4GB RAM, Kali Linux 2024.1**
+> **Measured on Raspberry Pi 5 with 4GB RAM, Kali Linux 2025.3**
 
 | Feature | This Project (C/C++ TUI) | Python/Qt5 GUI | Advantage |
 |---------|-------------------------|----------------|-----------|
