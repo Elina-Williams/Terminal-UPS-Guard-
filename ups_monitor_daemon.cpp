@@ -27,6 +27,11 @@
 #include <linux/i2c-dev.h>
 #include <iomanip>
 #include <regex>
+// For Socket Communication
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/stat.h>
+#include <poll.h>
 
 /*
 * ===== Key Design Features =====
@@ -459,7 +464,6 @@ public:
     }
 };
 
-
 // ===== Battery Monitor Class =====
 class BatteryMonitor {
 private:
@@ -477,10 +481,46 @@ private:
     std::condition_variable shutdownCV;
     std::mutex shutdownMutex;
 
+    // For Socket Communication
+    /** @brief Thread that runs the socket server loop. */
+    std::thread socketThread;
+    /** @brief Atomic flag to gracefully terminate the socket thread. */
+    std::atomic<bool> socketRunning{false};
+    /** @brief Mutex to protect `lastJsonData` from concurrent access.
+     *         Held when updating (by main I2C loop) or reading (by socket thread). 
+     */
+    std::mutex dataMutex;
+    std::string lastJsonData;
+
     static const int I2C_ADDR = 0x2d;
+    static const std::string SOCKET_PATH;   // 在类外定义
+
+    /**
+     * @brief Serializes a BatteryData structure into a compact JSON string.
+     * @param data  The battery data to convert.
+     * @return std::string  JSON object with keys: voltage, current, percent,
+     *                      capacity, time_to_empty, time_to_full, vbus_voltage,
+     *                      vbus_current, vbus_power, status.
+     */
+    std::string buildJson(const BatteryData& data);
+
+    /**
+     * @brief Main loop for the socket server thread.
+     * 
+     * Creates a listening Unix socket at SOCKET_PATH, accepts incoming connections,
+     * and sends the latest JSON data (protected by dataMutex) to each client.
+     * The socket is set to non‑blocking mode to allow periodic exit checks.
+     */
+    void socketServerLoop();
 
 public:
-    BatteryMonitor() : i2c(1, I2C_ADDR) {}
+    BatteryMonitor() : i2c(1, I2C_ADDR) {
+        {
+            std::lock_guard<std::mutex> lock(dataMutex);
+            lastJsonData = "{\"error\":\"no data yet\"}";
+        }
+        socketThread = std::thread(&BatteryMonitor::socketServerLoop, this);
+    }
 
     BatteryData readBatteryData() {
         BatteryData data;
@@ -645,6 +685,12 @@ public:
         try {
             BatteryData data = readBatteryData();
 
+            // ===== New: Update shared data for socket communication =====
+            {
+                std::lock_guard<std::mutex> lock(dataMutex);
+                lastJsonData = buildJson(data);
+            }
+
             // Check power status changes and notify
             if (firstRun) {
                 // Initialise state
@@ -691,10 +737,147 @@ public:
         if (shutdownThread.joinable()) {
             shutdownThread.join();
         }
-        
+
+        // Stop socket server
+        socketRunning = false;
+        if (socketThread.joinable()) {
+            socketThread.join();
+        }
+
         popupQueue.stop();
     }
 };
+
+// The socket file is placed in the /tmp directory (tmpfs memory filesystem) 
+// to avoid frequent writes to the SD card and to ensure automatic cleanup on reboot.
+const std::string BatteryMonitor::SOCKET_PATH = "/tmp/ups.sock";
+
+std::string BatteryMonitor::buildJson(const BatteryData &data) {
+    std::ostringstream oss;
+    oss << "{"
+        << "\"voltage\":" << data.battery_voltage << ","
+        << "\"current\":" << data.battery_current << ","
+        << "\"percent\":" << data.battery_percent << ","
+        << "\"capacity\":" << data.battery_capacity << ","
+        << "\"time_to_empty\":" << data.time_to_empty << ","
+        << "\"time_to_full\":" << data.time_to_full << ","
+        << "\"vbus_voltage\":" << data.vbus_voltage << ","
+        << "\"vbus_current\":" << data.vbus_current << ","
+        << "\"vbus_power\":" << data.vbus_power << ","
+        << "\"status\":" << static_cast<int>(data.status)
+        << "}";
+    return oss.str();    
+}
+
+void BatteryMonitor::socketServerLoop() {
+    int listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
+        perror("socket");
+        return;
+    }
+    // Delete existing socket file if it exists
+    unlink(SOCKET_PATH.c_str());
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SOCKET_PATH.c_str(), sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        close(listen_fd);
+        return;
+    }
+
+    // Set permissions to allow read/write for all users
+    // Note that the actual permission is `mode & ~umask`, so we temporarily set umask to 0 
+    // to ensure the desired permissions are applied.
+    mode_t old_mask = umask(0);
+    chmod(SOCKET_PATH.c_str(), 0666);
+    umask(old_mask);
+
+    if (listen(listen_fd, 5) < 0) {
+        perror("listen");
+        close(listen_fd);
+        return;
+    }
+
+    socketRunning = true;
+    // Loop to detect new connections. If none, sleep 100ms and continue, until socketRunning is set to false.
+    while (socketRunning) {
+        struct pollfd pfd;
+        pfd.fd = listen_fd;
+        pfd.events = POLLIN;
+        
+        int timeout = 100; 
+        int ret = poll(&pfd, 1, timeout);
+
+        if (ret < 0) {
+            if (errno == EINTR) {
+                continue; // Interrupted by signal, retry
+            }
+            if (errno == EBADF) {
+                // Socket has been closed, exit the loop
+                break;
+            }
+            perror("poll");
+            break;
+        } else if (ret == 0) {
+            // Timeout, no incoming connection, continue to next iteration
+            continue;
+        }
+     
+        // ret > 0, there is an incoming connection
+        if (pfd.revents & POLLIN) { 
+            int client_fd = accept(listen_fd, nullptr, nullptr);
+            if (client_fd < 0) {
+                // if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                    continue;
+                }
+                if (errno == ECONNABORTED) {
+                    continue; 
+                    // Client closed the connection before accept() could complete.
+                }
+                perror("accept");
+                break;
+            }
+
+            std::string json_to_send;
+            // Read the latest JSON data (protected by dataMutex) and send to client when a connection is established
+            {
+                std::lock_guard<std::mutex> lock(dataMutex);
+                json_to_send = lastJsonData.empty() ? "{\"error\":\"no data yet\"}" : lastJsonData;
+            }
+            /**
+            * If the client closed the connection before or during the server's send call, 
+            * send will attempt to write to a "closed pipe", which will result in a SIGPIPE signal 
+            * being sent to the process. To prevent the process from being terminated by this signal, 
+            * we can use the MSG_NOSIGNAL flag in the send() call. 
+            * This flag tells the kernel not to send a SIGPIPE signal if the other end has closed the connection.
+            */
+            const char* ptr = json_to_send.c_str();
+            size_t total = json_to_send.size();
+            while (total > 0) {
+                ssize_t n = send(client_fd, ptr, total, MSG_NOSIGNAL);
+                if (n <= 0) {
+                    if (errno == EINTR) continue;
+                    break; // Failed to send, exit the loop
+                }
+                ptr += n;
+                total -= n;
+            }
+            // ! Consider the partial send case here. Use a loop to ensure all data is sent. 
+            close(client_fd);
+        }
+        // Every time a new connection is established, the latest JSON data is sent to the client, 
+        // and then the connection is closed.
+    }
+
+    close(listen_fd);
+    unlink(SOCKET_PATH.c_str());   // Clean up socket file on exit
+}
 
 // Signal handler
 volatile bool keepRunning = true;
@@ -722,6 +905,3 @@ int main(int argc, char* argv[]) {
     } 
     return 0;
 }
-
-// 这个项目感受到了Linux中一切皆是文件的思想，在I2C通信时, 打开/dev/i2c-*的文件；
-// 在进行终端输出重定向时，打开/dev/tty-*或pts/0的文件。
