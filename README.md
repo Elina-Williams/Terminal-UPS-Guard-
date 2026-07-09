@@ -42,6 +42,44 @@ A **lightweight, high-performance UPS monitoring system** built entirely in C/C+
 - **Terminal Resize Support** - Adapts to any terminal size
 - **Non-blocking Architecture** - Monitoring continues during popups
 
+### 📤 **Zero‑Contention IPC (NEW)**
+- Exposes live UPS data via a **Unix Domain Socket** (`/tmp/ups.sock`) so external services can query the latest metrics without competing for the I2C bus.
+
+
+
+## External Data Access via Unix Socket (IPC)
+
+### JSON Response Format
+
+```json
+{
+  "voltage": 12.34,
+  "current": 0.56,
+  "percent": 87,
+  "capacity": 5200,
+  "time_to_empty": 180,
+  "time_to_full": 240,
+  "vbus_voltage": 5.12,
+  "vbus_current": 2.10,
+  "vbus_power": 10.75,
+  "status": 192
+}
+```
+
+### Example Usage
+```python
+import socket
+import json
+
+def fetch_ups_data():
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(0.5)
+    sock.connect("/tmp/ups.sock")
+    raw = sock.recv(1024).decode()
+    sock.close()
+    return json.loads(raw)
+```
+
 
 ## 🛠️ **Supported Hardware & Software**
 
